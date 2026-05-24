@@ -131,9 +131,178 @@
   let frameCount = 0, lastTime = 0;
   let continueUsed = false;
   let comboShowUntil = 0, successFlashUntil = 0;
-  let btnPlay = null, btnContinue = null;
+  let btnPlay = null, btnContinue = null, btnMute = null;
 
   try { best = parseInt(localStorage.getItem('nds_best')) || 0; } catch(_) {}
+
+  /* ══════════════ AUDIO ENGINE ══════════════ */
+  const Snd = (function () {
+    let ac = null, master = null;
+    let muted = false;
+    // Music state
+    let musicOn = false, nextBeat = 0, beatIdx = 0, schedId = null;
+    const BPM       = 128;
+    const HALF      = (60 / BPM) / 2;   // 8th-note duration
+    const LOOKAHEAD = 0.1;
+    const TICK_MS   = 50;
+
+    function init() {
+      if (ac) return;
+      ac = new (window.AudioContext || window.webkitAudioContext)();
+      master = ac.createGain();
+      master.gain.value = 1;
+      master.connect(ac.destination);
+    }
+    function resume() { if (ac && ac.state === 'suspended') ac.resume(); }
+
+    // ── Primitives ──
+    function osc(freq, type, t, dur, vol, freqEnd) {
+      if (!ac) return;
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.connect(g); g.connect(master);
+      o.type = type || 'sine';
+      o.frequency.setValueAtTime(freq, t);
+      if (freqEnd) o.frequency.exponentialRampToValueAtTime(freqEnd, t + dur);
+      g.gain.setValueAtTime(vol, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.start(t); o.stop(t + dur + 0.02);
+    }
+
+    function noise(t, dur, vol, lpHz, lpEnd) {
+      if (!ac) return;
+      const len  = Math.ceil(ac.sampleRate * (dur + 0.05));
+      const buf  = ac.createBuffer(1, len, ac.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+      const src  = ac.createBufferSource();
+      src.buffer = buf;
+      const filt = ac.createBiquadFilter();
+      filt.type  = 'lowpass';
+      filt.frequency.setValueAtTime(lpHz, t);
+      if (lpEnd) filt.frequency.exponentialRampToValueAtTime(lpEnd, t + dur);
+      const g = ac.createGain();
+      g.gain.setValueAtTime(vol, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      src.connect(filt); filt.connect(g); g.connect(master);
+      src.start(t); src.stop(t + dur + 0.05);
+    }
+
+    // ── SFX ──
+    function cycle(forward) {
+      if (!ac) return;
+      const t = ac.currentTime;
+      const f = forward ? 660 : 440;
+      osc(f,         'sine', t,       0.07, 0.18);
+      osc(f * (forward ? 1.5 : 0.67), 'sine', t + 0.04, 0.05, 0.09);
+    }
+
+    function success() {
+      if (!ac) return;
+      const t = ac.currentTime;
+      [523, 659, 784, 1047].forEach((f, i) => {
+        osc(f,     'sine',     t + i * 0.055, 0.14, 0.26 - i * 0.04);
+        osc(f * 2, 'triangle', t + i * 0.055, 0.06, 0.07);
+      });
+    }
+
+    function fail() {
+      if (!ac) return;
+      const t = ac.currentTime;
+      // Boom — pitched sweep down
+      osc(130, 'sine',     t,       0.30, 0.7, 28);
+      osc(180, 'sawtooth', t,       0.38, 0.35);
+      osc(120, 'sawtooth', t + 0.08, 0.32, 0.28);
+      osc(80,  'sawtooth', t + 0.18, 0.28, 0.22);
+      // Noise crunch
+      noise(t, 0.55, 0.55, 1400, 70);
+    }
+
+    function levelUp() {
+      if (!ac) return;
+      const t = ac.currentTime;
+      [392, 523, 659, 784, 1047].forEach((f, i) => {
+        osc(f, 'square', t + i * 0.07, 0.13, 0.2 - i * 0.02);
+      });
+      [784, 988, 1175].forEach(f => osc(f, 'triangle', t + 0.40, 0.2, 0.16));
+    }
+
+    function combo() {
+      if (!ac) return;
+      const t = ac.currentTime;
+      [880, 1108, 1320, 1760, 2093].forEach((f, i) =>
+        osc(f, 'triangle', t + i * 0.038, 0.11, 0.28 - i * 0.05));
+    }
+
+    // ── Background Music (8-step sequencer, A minor) ──
+    const BASS  = [110, 110, 146.83, 110, 130.81, 110, 98, 110];
+    const LEAD  = [0, 220, 0, 330, 0, 440, 330, 0];
+
+    function scheduleTick() {
+      if (!ac || !musicOn) return;
+      while (nextBeat < ac.currentTime + LOOKAHEAD) {
+        const t    = nextBeat;
+        const step = beatIdx % 8;
+
+        // Kick on steps 0 & 4
+        if (step === 0 || step === 4) osc(110, 'sine', t, 0.22, 0.5, 32);
+
+        // Closed hi-hat every step
+        noise(t, 0.04, 0.1, 9000, 5000);
+
+        // Open hi-hat on step 6
+        if (step === 6) noise(t, 0.18, 0.13, 11000, 3000);
+
+        // Snare on steps 2 & 6
+        if (step === 2 || step === 6) {
+          noise(t, 0.14, 0.28, 2500, 200);
+          osc(220, 'sine', t, 0.06, 0.15);
+        }
+
+        // Bass (quarter notes: even steps)
+        if (step % 2 === 0) {
+          osc(BASS[step],     'sawtooth', t, HALF * 1.7, 0.22);
+          osc(BASS[step] * 2, 'sine',     t, HALF * 1.3, 0.07);
+        }
+
+        // Lead
+        const lf = LEAD[step];
+        if (lf) {
+          osc(lf,     'triangle', t, HALF * 0.8, 0.11);
+          osc(lf * 2, 'sine',     t, HALF * 0.4, 0.04);
+        }
+
+        nextBeat += HALF;
+        beatIdx++;
+      }
+    }
+
+    function startMusic() {
+      if (!ac || musicOn) return;
+      musicOn = true;
+      nextBeat = ac.currentTime + 0.08;
+      beatIdx  = 0;
+      schedId  = setInterval(scheduleTick, TICK_MS);
+    }
+
+    function stopMusic() {
+      musicOn = false;
+      if (schedId) { clearInterval(schedId); schedId = null; }
+    }
+
+    function toggleMute() {
+      muted = !muted;
+      if (master) {
+        master.gain.cancelScheduledValues(ac.currentTime);
+        master.gain.setTargetAtTime(muted ? 0 : 1, ac.currentTime, 0.03);
+      }
+      return muted;
+    }
+
+    function isMuted() { return muted; }
+
+    return { init, resume, cycle, success, fail, levelUp, combo,
+             startMusic, stopMusic, toggleMute, isMuted };
+  })();
 
   /* ══════════════ STARS ══════════════ */
   function buildStars() {
@@ -154,6 +323,8 @@
     continueUsed = false; comboShowUntil = successFlashUntil = 0;
     frameCount = 0;
     spawnWall();
+    Snd.stopMusic();
+    Snd.startMusic();
   }
 
   /* ══════════════ WALLS ══════════════ */
@@ -459,12 +630,14 @@
 
   function onSuccess(x, y) {
     score++; wallsCleared++; combo++;
-    if (combo >= COMBO_MIN) comboShowUntil = frameCount + 100;
+    if (combo === COMBO_MIN) { comboShowUntil = frameCount + 100; Snd.combo(); }
+    else if (combo > COMBO_MIN)  comboShowUntil = frameCount + 100;
     playerFlash = 1; playerFlashCol = '#00ff88';
     successFlashUntil = frameCount + 7;
     burst(x, y, '#00ff88', '#00ccff', 22, 7);
     burst(x+30, y, '#aaffaa', '#ffffff', 8, 4);
-    if (wallsCleared % WALLS_LVL === 0) level++;
+    Snd.success();
+    if (wallsCleared % WALLS_LVL === 0) { level++; Snd.levelUp(); }
     if (score > best) {
       best = score;
       try { localStorage.setItem('nds_best', best); } catch(_) {}
@@ -474,6 +647,8 @@
   function onFail(x, y) {
     burst(x, y, '#ff2200', '#ff8800', 32, 10);
     burst(x, y, '#ff5500', '#ffaa00', 16, 5);
+    Snd.fail();
+    Snd.stopMusic();
     triggerShake(); state = 'dead';
   }
 
@@ -537,6 +712,7 @@
 
     drawPreview();
     drawZoneIndicator();
+    drawMuteBtn();
 
     // Combo
     if (combo >= COMBO_MIN && frameCount <= comboShowUntil) {
@@ -559,6 +735,23 @@
     ctx.fillText('NEXT', W-48, py);
     const rot = frameCount * ROT_SPD[nw.holeShape];
     fillShape(nw.holeShape, px, py+sz/2+12, sz, col, glw, 18, rot);
+  }
+
+  function drawMuteBtn() {
+    const size = 32, x = W - 50, y = 8;
+    const muted = Snd.isMuted();
+    // Bg pill
+    ctx.fillStyle = muted ? 'rgba(80,0,0,0.55)' : 'rgba(0,30,60,0.55)';
+    ctx.beginPath(); ctx.roundRect(x, y, size, size, 8); ctx.fill();
+    // Border
+    const bcol = muted ? '#ff4444' : '#0088cc';
+    glow(bcol, 8); ctx.strokeStyle = bcol; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.roundRect(x + 0.5, y + 0.5, size - 1, size - 1, 8); ctx.stroke(); noGlow();
+    // Icon
+    ctx.fillStyle = muted ? '#ff6666' : '#44aaff';
+    ctx.font = '16px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(muted ? '🔇' : '🔊', x + size / 2, y + size / 2);
+    btnMute = { x, y, w: size, h: size };
   }
 
   function drawZoneIndicator() {
@@ -721,11 +914,21 @@
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   wrap.addEventListener('contextmenu',   e => e.preventDefault());
 
-  function cycleNext() { shapeIdx = (shapeIdx + 1) % SHAPES.length; combo = 0; }
-  function cyclePrev() { shapeIdx = (shapeIdx - 1 + SHAPES.length) % SHAPES.length; combo = 0; }
+  function cycleNext() { shapeIdx = (shapeIdx + 1) % SHAPES.length; combo = 0; Snd.cycle(true); }
+  function cyclePrev() { shapeIdx = (shapeIdx - 1 + SHAPES.length) % SHAPES.length; combo = 0; Snd.cycle(false); }
 
   canvas.addEventListener('pointerdown', e => {
     e.preventDefault();
+
+    // Bootstrap AudioContext on first gesture (browser policy)
+    Snd.init();
+    Snd.resume();
+
+    // Mute button always intercepts (visible during gameplay)
+    if (btnMute && inRect(e.clientX, e.clientY, btnMute)) {
+      Snd.toggleMute();
+      return;
+    }
 
     if (state === 'start') {
       state = 'playing';
@@ -735,10 +938,13 @@
     }
 
     if (state === 'dead') {
-      if (btnPlay     && inRect(e.clientX, e.clientY, btnPlay))     { state='playing'; document.body.classList.add('playing'); initGame(); }
-      else if (btnContinue && !continueUsed && inRect(e.clientX, e.clientY, btnContinue)) {
-        continueUsed=true; particles=[]; playerFlash=0;
-        walls=walls.filter(w=>!w.passed); state='playing';
+      if (btnPlay && inRect(e.clientX, e.clientY, btnPlay)) {
+        state = 'playing'; document.body.classList.add('playing'); initGame();
+      } else if (btnContinue && !continueUsed && inRect(e.clientX, e.clientY, btnContinue)) {
+        continueUsed = true; particles = []; playerFlash = 0;
+        walls = walls.filter(w => !w.passed);
+        Snd.stopMusic(); Snd.startMusic();
+        state = 'playing';
       }
       return;
     }
