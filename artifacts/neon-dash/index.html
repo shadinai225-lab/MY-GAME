@@ -131,7 +131,7 @@
   let frameCount = 0, lastTime = 0;
   let continueUsed = false;
   let comboShowUntil = 0, successFlashUntil = 0;
-  let btnPlay = null, btnContinue = null, btnMute = null;
+  let btnPlay = null, btnContinue = null, btnMute = null, btnGuide = null, btnGuideBack = null;
 
   try { best = parseInt(localStorage.getItem('nds_best')) || 0; } catch(_) {}
 
@@ -828,22 +828,157 @@
     ctx.font='13px Orbitron, monospace'; ctx.fillStyle='#445566';
     ctx.fillText('BEST: '+String(best).padStart(5,'0'), cx, ty+148);
 
-    ctx.font='11px Orbitron, monospace'; ctx.fillStyle='#334455';
-    ctx.fillText('L-CLICK ◀ PREV  ·  R-CLICK ▶ NEXT  ·  ALIGN ZONE  ·  MATCH SHAPE', cx, ty+182);
+    // HOW TO PLAY button
+    const gbw = 190, gbh = 38, gbx = cx - gbw/2, gby = ty + 174;
+    drawBtn(gbx, gby, gbw, gbh, '#aa44ff', '#0d0022', 'HOW TO PLAY');
+    btnGuide = { x: gbx, y: gby, w: gbw, h: gbh };
+  }
 
-    // Shape legend: 2 rows of 3
-    const lRow1Y = ty + 218, lRow2Y = ty + 266;
-    const labels = ['CIRCLE','TRIANGLE','SQUARE','DIAMOND','PENTAGON','STAR'];
-    SHAPES.forEach((s, i) => {
-      const row = Math.floor(i / 3), col2 = i % 3;
-      const lx  = cx + (col2 - 1) * 110;
-      const ly  = row === 0 ? lRow1Y : lRow2Y;
-      const lr  = frameCount * ROT_SPD[s];
-      fillShape(s, lx, ly, 30, SCOL[s], SGLOW[s], 14, lr);
-      ctx.font='9px Orbitron, monospace'; ctx.fillStyle=SCOL[s];
-      ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.fillText(labels[i], lx, ly+26);
+  /* ══════════════ GUIDE SCREEN ══════════════ */
+  function drawGuide() {
+    drawBg();
+    const cx = W/2, cy = H/2;
+
+    // Frosted panel
+    ctx.fillStyle = 'rgba(6,2,18,0.92)';
+    ctx.beginPath(); ctx.roundRect(cx - W*0.46, cy - H*0.47, W*0.92, H*0.94, 18); ctx.fill();
+    ctx.strokeStyle = '#330066'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.roundRect(cx - W*0.46 + 1, cy - H*0.47 + 1, W*0.92 - 2, H*0.94 - 2, 18); ctx.stroke();
+
+    // Title
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = 'bold 22px Orbitron, monospace';
+    glow('#aa44ff', 20); ctx.fillStyle = '#cc66ff';
+    ctx.fillText('HOW TO PLAY', cx, cy - H*0.42); noGlow();
+
+    // Divider
+    ctx.strokeStyle = '#220044'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx - W*0.38, cy - H*0.38); ctx.lineTo(cx + W*0.38, cy - H*0.38); ctx.stroke();
+
+    const lx = cx - W*0.40; // left-aligned text start
+    let oy = cy - H*0.34;
+    const LINE = H * 0.072;
+
+    // ── OBJECTIVE ──
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.font = 'bold 11px Orbitron, monospace';
+    glow('#00f5ff', 8); ctx.fillStyle = '#00f5ff';
+    ctx.fillText('OBJECTIVE', lx, oy); noGlow();
+    oy += LINE * 0.55;
+    ctx.font = '11px Orbitron, monospace'; ctx.fillStyle = '#778899';
+    ctx.fillText('Pass through each wall by matching TWO things:', lx, oy); oy += LINE * 0.52;
+    ctx.fillStyle = '#aabbcc';
+    ctx.fillText('  1.  Your SHAPE  must equal the wall\'s cutout shape', lx, oy); oy += LINE * 0.52;
+    ctx.fillText('  2.  Your HEIGHT must align with the glowing zone (top / mid / bot)', lx, oy);
+    oy += LINE * 0.85;
+
+    // Divider
+    ctx.strokeStyle = '#1a0033'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx - W*0.38, oy - LINE*0.2); ctx.lineTo(cx + W*0.38, oy - LINE*0.2); ctx.stroke();
+
+    // ── CONTROLS (two columns) ──
+    ctx.font = 'bold 11px Orbitron, monospace';
+    glow('#ffcc00', 8); ctx.fillStyle = '#ffcc00';
+    ctx.fillText('CONTROLS', lx, oy); noGlow();
+    oy += LINE * 0.55;
+
+    const col2x = cx + W * 0.04;
+    const rows = [
+      ['← / A / L-CLICK',   'Previous shape'],
+      ['→ / D / SPACE / R-CLICK', 'Next shape'],
+      ['M',                  'Mute / unmute music'],
+      ['ESC',                'Back to menu'],
+    ];
+    rows.forEach(([key, desc]) => {
+      ctx.font = 'bold 10px Orbitron, monospace';
+      glow('#ffaa00', 6); ctx.fillStyle = '#ffcc55';
+      ctx.textAlign = 'right'; ctx.fillText(key, col2x - 10, oy); noGlow();
+      ctx.font = '10px Orbitron, monospace'; ctx.fillStyle = '#778899';
+      ctx.textAlign = 'left'; ctx.fillText('— ' + desc, col2x + 4, oy);
+      oy += LINE * 0.52;
     });
+    oy += LINE * 0.35;
+
+    // Divider
+    ctx.strokeStyle = '#1a0033'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx - W*0.38, oy - LINE*0.2); ctx.lineTo(cx + W*0.38, oy - LINE*0.2); ctx.stroke();
+
+    // ── ZONES ──
+    ctx.textAlign = 'left'; ctx.font = 'bold 11px Orbitron, monospace';
+    glow('#00ff88', 8); ctx.fillStyle = '#00ff88';
+    ctx.fillText('ZONES', lx, oy); noGlow();
+    oy += LINE * 0.55;
+
+    const zoneLabels = ['TOP', 'MID', 'BOT'];
+    const zoneColors = ['#00f5ff', '#ff00ff', '#ffcc00'];
+    const zx = lx + 16;
+    zoneLabels.forEach((label, i) => {
+      const dotX = zx + i * W * 0.27;
+      // Dot
+      glow(zoneColors[i], 10); ctx.fillStyle = zoneColors[i];
+      ctx.beginPath(); ctx.arc(dotX, oy, 6, 0, Math.PI*2); ctx.fill(); noGlow();
+      ctx.font = 'bold 10px Orbitron, monospace'; ctx.fillStyle = zoneColors[i];
+      ctx.textAlign = 'left';
+      ctx.fillText(label, dotX + 12, oy);
+    });
+    oy += LINE * 0.48;
+    ctx.font = '10px Orbitron, monospace'; ctx.fillStyle = '#556677'; ctx.textAlign = 'left';
+    ctx.fillText('The glowing dot on the right edge shows the target zone.', lx, oy);
+    ctx.fillText('Bob up/down naturally — just watch your height.', lx, oy + LINE*0.46);
+    oy += LINE * 1.0;
+
+    // Divider
+    ctx.strokeStyle = '#1a0033'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx - W*0.38, oy - LINE*0.2); ctx.lineTo(cx + W*0.38, oy - LINE*0.2); ctx.stroke();
+
+    // ── SHAPES ──
+    ctx.textAlign = 'left'; ctx.font = 'bold 11px Orbitron, monospace';
+    glow('#ff00ff', 8); ctx.fillStyle = '#ff44ff';
+    ctx.fillText('SHAPES', lx, oy); noGlow();
+    oy += LINE * 0.58;
+
+    const shapeLabels = ['CIRCLE','TRI','SQUARE','DIAMOND','PENTA','STAR'];
+    const step = W * 0.83 / 6;
+    SHAPES.forEach((s, i) => {
+      const sx = lx + step * i + step / 2;
+      const rot = frameCount * ROT_SPD[s];
+      fillShape(s, sx, oy, 19, SCOL[s], SGLOW[s], 9, rot);
+      ctx.font = '8px Orbitron, monospace'; ctx.fillStyle = SCOL[s];
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(shapeLabels[i], sx, oy + 20);
+    });
+    oy += LINE * 0.85;
+
+    // Divider
+    ctx.strokeStyle = '#1a0033'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx - W*0.38, oy - LINE*0.2); ctx.lineTo(cx + W*0.38, oy - LINE*0.2); ctx.stroke();
+
+    // ── SCORING ──
+    ctx.textAlign = 'left'; ctx.font = 'bold 11px Orbitron, monospace';
+    glow('#ff8800', 8); ctx.fillStyle = '#ff9922';
+    ctx.fillText('SCORING', lx, oy); noGlow();
+    oy += LINE * 0.55;
+
+    const tips = [
+      ['+1',            'point for every wall you clear'],
+      ['×5 COMBO',      'bonus flash after 5 walls in a row without cycling'],
+      ['LEVEL UP',      'every 10 walls cleared — speed and difficulty increase'],
+      ['NEXT preview',  'top-right shows the upcoming wall\'s shape'],
+      ['ZONE BAR',      'right edge — track your height vs the target dot'],
+    ];
+    tips.forEach(([label, desc]) => {
+      ctx.font = 'bold 10px Orbitron, monospace';
+      glow('#ff9922', 5); ctx.fillStyle = '#ffaa44';
+      ctx.textAlign = 'right'; ctx.fillText(label, col2x - 10, oy); noGlow();
+      ctx.font = '10px Orbitron, monospace'; ctx.fillStyle = '#667788';
+      ctx.textAlign = 'left'; ctx.fillText('— ' + desc, col2x + 4, oy);
+      oy += LINE * 0.5;
+    });
+
+    // BACK button
+    const bbw = 160, bbh = 38, bbx = cx - bbw/2, bby = cy + H*0.43;
+    drawBtn(bbx, bby, bbw, bbh, '#aa44ff', '#0d0022', '← BACK');
+    btnGuideBack = { x: bbx, y: bby, w: bbw, h: bbh };
   }
 
   /* ══════════════ GAME SCREEN ══════════════ */
@@ -930,7 +1065,13 @@
       return;
     }
 
+    if (state === 'guide') {
+      if (btnGuideBack && inRect(e.clientX, e.clientY, btnGuideBack)) state = 'start';
+      return;
+    }
+
     if (state === 'start') {
+      if (btnGuide && inRect(e.clientX, e.clientY, btnGuide)) { state = 'guide'; return; }
       state = 'playing';
       document.body.classList.add('playing');
       initGame();
@@ -958,6 +1099,15 @@
   });
 
   window.addEventListener('keydown', e => {
+    // Mute toggle works in any state
+    if (e.code === 'KeyM') { Snd.init(); Snd.resume(); Snd.toggleMute(); return; }
+
+    // Escape: guide → start, playing → nothing (don't quit mid-game by accident)
+    if (e.code === 'Escape') {
+      if (state === 'guide') { state = 'start'; return; }
+      return;
+    }
+
     const fwd  = ['ArrowRight','KeyD','KeyE','Period'].includes(e.code);
     const back = ['ArrowLeft', 'KeyA','KeyQ','Comma'].includes(e.code);
     const any  = fwd || back || e.code === 'Space';
@@ -965,6 +1115,7 @@
     if (!any) return;
     e.preventDefault();
 
+    if (state === 'guide') return;
     if (state === 'start') { state='playing'; document.body.classList.add('playing'); initGame(); return; }
     if (state === 'dead')  { state='playing'; document.body.classList.add('playing'); initGame(); return; }
     if (state === 'playing') {
@@ -1002,6 +1153,7 @@
     lastTime = ts;
     update();
     if      (state === 'start')   drawStart();
+    else if (state === 'guide')   drawGuide();
     else if (state === 'playing') drawGame();
     else                          drawDead();
     requestAnimationFrame(loop);
