@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Neon Dash: Shape Shift</title>
+  <meta name="description" content="A hyper-casual neon browser game — cycle your shape to match the wall cutout!" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: #0a0a1a;
+      overflow: hidden;
+      font-family: 'Orbitron', monospace;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    #wrap {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    canvas { display: block; }
+
+    @keyframes screenShake {
+      0%   { transform: translate(0, 0) rotate(0deg); }
+      10%  { transform: translate(-10px, -6px) rotate(-0.5deg); }
+      20%  { transform: translate(10px, 7px) rotate(0.5deg); }
+      30%  { transform: translate(-8px, 5px) rotate(-0.4deg); }
+      40%  { transform: translate(8px, -5px) rotate(0.4deg); }
+      50%  { transform: translate(-6px, 7px) rotate(-0.3deg); }
+      60%  { transform: translate(6px, -7px) rotate(0.3deg); }
+      70%  { transform: translate(-10px, 3px) rotate(-0.2deg); }
+      80%  { transform: translate(10px, -3px) rotate(0.2deg); }
+      90%  { transform: translate(-5px, 5px) rotate(-0.1deg); }
+      100% { transform: translate(0, 0) rotate(0deg); }
+    }
+    .shaking { animation: screenShake 0.45s cubic-bezier(.36,.07,.19,.97) both; }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <canvas id="c"></canvas>
+  </div>
+  <script>
+  (function() {
+    'use strict';
+
+    /* ══════════════════════════════════════
+       CANVAS SETUP
+    ══════════════════════════════════════ */
+    const wrap   = document.getElementById('wrap');
+    const canvas = document.getElementById('c');
+    const ctx    = canvas.getContext('2d');
+    let W, H;
+
+    function resize() {
+      W = canvas.width  = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+    }
+    resize();
+    window.addEventListener('resize', () => { resize(); if (state === 'start') drawStart(); });
+
+    /* ══════════════════════════════════════
+       CONSTANTS
+    ══════════════════════════════════════ */
+    const SHAPES       = ['circle', 'triangle', 'square'];
+    const SHAPE_COL    = { circle: '#00f5ff', triangle: '#ff00ff', square: '#aaff00' };
+    const SHAPE_GLOW   = { circle: '#007aff', triangle: '#cc00cc', square: '#77cc00' };
+    const BG           = '#0a0a1a';
+    const PLAYER_X_PCT = 0.2;
+    const HOLE_SIZE    = 130;
+    const WALL_W       = 68;
+    const BASE_SPEED   = 4.8;
+    const SPD_INC      = 0.55;
+    const WALLS_PER_LVL = 10;
+    const COMBO_MIN    = 5;
+    const WALL_INTERVAL_BASE = 90;
+    const WALL_INTERVAL_MIN  = 52;
+
+    /* ══════════════════════════════════════
+       GAME STATE
+    ══════════════════════════════════════ */
+    let state = 'start'; // 'start' | 'playing' | 'dead'
+    let score = 0, best, combo = 0, shapeIdx = 0, wallsCleared = 0, level = 1;
+    let playerFlash = 0, playerFlashColor = '#00ff88';
+    let walls = [], particles = [], stars = [];
+    let nextWallTimer = 0, wallInterval = WALL_INTERVAL_BASE;
+    let frameCount = 0;
+    let lastTime   = 0;
+    let continueUsed = false;
+    let comboShowUntil = 0;
+    let btnPlayAgain = null, btnContinue = null;
+    let successFlashUntil = 0;
+
+    try { best = parseInt(localStorage.getItem('nds_best')) || 0; }
+    catch(e) { best = 0; }
+
+    /* ══════════════════════════════════════
+       STARS (background)
+    ══════════════════════════════════════ */
+    function buildStars() {
+      stars = [];
+      for (let i = 0; i < 120; i++) {
+        stars.push({
+          x: Math.random() * 2000,
+          y: Math.random(),
+          r: Math.random() * 1.5 + 0.3,
+          spd: Math.random() * 0.4 + 0.1,
+          alpha: Math.random() * 0.5 + 0.2
+        });
+      }
+    }
+    buildStars();
+
+    /* ══════════════════════════════════════
+       INIT
+    ══════════════════════════════════════ */
+    function initGame() {
+      score        = 0;
+      combo        = 0;
+      shapeIdx     = 0;
+      wallsCleared = 0;
+      level        = 1;
+      playerFlash  = 0;
+      playerFlashColor = SHAPE_COL.circle;
+      walls        = [];
+      particles    = [];
+      nextWallTimer = 0;
+      wallInterval  = WALL_INTERVAL_BASE;
+      continueUsed  = false;
+      comboShowUntil = 0;
+      successFlashUntil = 0;
+      frameCount   = 0;
+      spawnWall();
+    }
+
+    /* ══════════════════════════════════════
+       WALLS
+    ══════════════════════════════════════ */
+    function rndShape() { return SHAPES[Math.floor(Math.random() * 3)]; }
+
+    function spawnWall() {
+      walls.push({
+        x: W + WALL_W + 10,
+        holeShape: rndShape(),
+        holeY: H / 2,
+        passed: false,
+      });
+    }
+
+    function wallSpeed() { return BASE_SPEED + (level - 1) * SPD_INC; }
+
+    function getNextUnpassed() {
+      for (const w of walls) if (!w.passed) return w;
+      return null;
+    }
+
+    /* ══════════════════════════════════════
+       DRAW HELPERS
+    ══════════════════════════════════════ */
+    function glow(color, blur) { ctx.shadowColor = color; ctx.shadowBlur = blur; }
+    function noGlow()          { ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; }
+
+    function fillShape(shape, x, y, size, color, glowColor, glowBlur) {
+      ctx.beginPath();
+      _shapePath(shape, x, y, size);
+      glow(glowColor || color, glowBlur || 0);
+      ctx.fillStyle = color;
+      ctx.fill();
+      noGlow();
+    }
+
+    function strokeShape(shape, x, y, size, color, lw, glowColor, glowBlur) {
+      ctx.beginPath();
+      _shapePath(shape, x, y, size);
+      glow(glowColor || color, glowBlur || 0);
+      ctx.strokeStyle = color;
+      ctx.lineWidth   = lw;
+      ctx.stroke();
+      noGlow();
+    }
+
+    function _shapePath(shape, x, y, size) {
+      if (shape === 'circle') {
+        ctx.arc(x, y, size / 2, 0, Math.PI * 2);
+      } else if (shape === 'triangle') {
+        const h = size * 0.866;
+        ctx.moveTo(x,             y - h * 0.64);
+        ctx.lineTo(x + size * 0.5, y + h * 0.36);
+        ctx.lineTo(x - size * 0.5, y + h * 0.36);
+        ctx.closePath();
+      } else {
+        const s = size * 0.78;
+        ctx.roundRect(x - s / 2, y - s / 2, s, s, 10);
+      }
+    }
+
+    /* ══════════════════════════════════════
+       WALL RENDERING  (offscreen blit)
+    ══════════════════════════════════════ */
+    // Cache for reused offscreen canvas
+    let _offC = null, _offCtx = null;
+
+    function ensureOff() {
+      if (!_offC || _offC.width !== W || _offC.height !== H) {
+        _offC   = new OffscreenCanvas(W, H);
+        _offCtx = _offC.getContext('2d');
+      }
+    }
+
+    function drawWall(w) {
+      ensureOff();
+      const ox = _offCtx;
+      ox.clearRect(0, 0, W, H);
+
+      const wx = Math.round(w.x);
+      const hy = w.holeY;
+
+      // Wall body
+      ox.fillStyle = '#130825';
+      ox.fillRect(wx, 0, WALL_W, H);
+
+      // Cut hole
+      ox.globalCompositeOperation = 'destination-out';
+      ox.fillStyle = 'black';
+      ox.beginPath();
+      _offShapePath(ox, w.holeShape, wx + WALL_W / 2, hy, HOLE_SIZE);
+      ox.fill();
+      ox.globalCompositeOperation = 'source-over';
+
+      // Blit to main canvas
+      const dist     = w.x - W * PLAYER_X_PCT;
+      const proximity = Math.max(0, 1 - dist / (W * 0.65));
+      const edgeGlow = 18 + proximity * 22;
+
+      glow('#7700cc', edgeGlow);
+      ctx.drawImage(_offC, 0, 0);
+      noGlow();
+
+      // Edge line
+      ctx.strokeStyle = '#5500aa';
+      ctx.lineWidth   = 2;
+      glow('#aa00ff', 14);
+      ctx.strokeRect(wx + 0.5, 0, WALL_W - 1, H);
+      noGlow();
+
+      // Hole outline
+      const col = SHAPE_COL[w.holeShape];
+      strokeShape(w.holeShape, wx + WALL_W / 2, hy, HOLE_SIZE, col, 2.5, col, 18 + proximity * 14);
+
+      // Approach pulse (scale the hole outline when close)
+      if (proximity > 0.4) {
+        const pulse = 1 + (proximity - 0.4) * 0.08 * Math.sin(frameCount * 0.25);
+        ctx.save();
+        ctx.translate(wx + WALL_W / 2, hy);
+        ctx.scale(pulse, pulse);
+        ctx.translate(-(wx + WALL_W / 2), -hy);
+        strokeShape(w.holeShape, wx + WALL_W / 2, hy, HOLE_SIZE, col, 1.5,
+          col, 8 + proximity * 10);
+        ctx.restore();
+      }
+    }
+
+    function _offShapePath(ox, shape, x, y, size) {
+      ox.beginPath();
+      if (shape === 'circle') {
+        ox.arc(x, y, size / 2, 0, Math.PI * 2);
+      } else if (shape === 'triangle') {
+        const h = size * 0.866;
+        ox.moveTo(x,              y - h * 0.64);
+        ox.lineTo(x + size * 0.5, y + h * 0.36);
+        ox.lineTo(x - size * 0.5, y + h * 0.36);
+        ox.closePath();
+      } else {
+        const s = size * 0.78;
+        ox.roundRect(x - s / 2, y - s / 2, s, s, 10);
+      }
+    }
+
+    /* ══════════════════════════════════════
+       PLAYER RENDERING
+    ══════════════════════════════════════ */
+    function drawPlayer() {
+      const px    = W * PLAYER_X_PCT;
+      const py    = H / 2;
+      const shape = SHAPES[shapeIdx];
+      let col     = SHAPE_COL[shape];
+      let glowCol = SHAPE_GLOW[shape];
+      let glowAmt = 32;
+
+      // Flash on success
+      if (playerFlash > 0) {
+        if (playerFlash > 0.5) {
+          col     = '#ffffff';
+          glowCol = playerFlashColor;
+          glowAmt = 70;
+        }
+        playerFlash = Math.max(0, playerFlash - 0.045);
+      }
+
+      // Idle breathe
+      const breathe = 1 + 0.035 * Math.sin(frameCount * 0.07);
+
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.scale(breathe, breathe);
+      ctx.translate(-px, -py);
+
+      // Ghost trail
+      for (let i = 3; i >= 1; i--) {
+        ctx.globalAlpha = 0.12 * (4 - i);
+        fillShape(shape, px - i * 14, py, 60 * (1 - i * 0.04), col, glowCol, 8);
+      }
+      ctx.globalAlpha = 1;
+
+      // Main orb — double-layer glow
+      fillShape(shape, px, py, 62, col, glowCol, glowAmt);
+      fillShape(shape, px, py, 50, col + 'cc', glowCol, glowAmt * 0.6);
+
+      ctx.restore();
+    }
+
+    /* ══════════════════════════════════════
+       PARTICLES
+    ══════════════════════════════════════ */
+    function burst(x, y, col1, col2, count, spd) {
+      for (let i = 0; i < count; i++) {
+        const ang  = (Math.PI * 2 * i / count) + Math.random() * 0.6 - 0.3;
+        const s    = spd * (0.5 + Math.random() * 1.2);
+        const size = 2.5 + Math.random() * 4.5;
+        particles.push({
+          x, y,
+          vx: Math.cos(ang) * s,
+          vy: Math.sin(ang) * s - 1,
+          life: 1,
+          decay: 0.018 + Math.random() * 0.028,
+          size,
+          col: Math.random() > 0.4 ? col1 : col2,
+          star: Math.random() > 0.7
+        });
+      }
+    }
+
+    function updateParticles() {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x   += p.vx;
+        p.y   += p.vy;
+        p.vy  += 0.14;
+        p.vx  *= 0.965;
+        p.life -= p.decay;
+        if (p.life <= 0) particles.splice(i, 1);
+      }
+    }
+
+    function drawParticles() {
+      for (const p of particles) {
+        ctx.globalAlpha = Math.pow(p.life, 0.6);
+        glow(p.col, 14);
+        ctx.fillStyle = p.col;
+        ctx.beginPath();
+        if (p.star) {
+          // 4-point star
+          const r1 = p.size * p.life;
+          const r2 = r1 * 0.4;
+          for (let k = 0; k < 8; k++) {
+            const a = (Math.PI / 4) * k;
+            const r = k % 2 === 0 ? r1 : r2;
+            k === 0 ? ctx.moveTo(p.x + r * Math.cos(a), p.y + r * Math.sin(a))
+                    : ctx.lineTo(p.x + r * Math.cos(a), p.y + r * Math.sin(a));
+          }
+          ctx.closePath();
+        } else {
+          ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+        }
+        ctx.fill();
+        noGlow();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    /* ══════════════════════════════════════
+       COLLISION
+    ══════════════════════════════════════ */
+    function checkCollisions() {
+      const px = W * PLAYER_X_PCT;
+      for (const w of walls) {
+        if (w.passed) continue;
+        if (Math.abs((w.x + WALL_W / 2) - px) < 28) {
+          w.passed = true;
+          if (SHAPES[shapeIdx] === w.holeShape) {
+            onSuccess(px, H / 2);
+          } else {
+            onFail(px, H / 2);
+          }
+          break;
+        }
+      }
+    }
+
+    function onSuccess(x, y) {
+      score++;
+      wallsCleared++;
+      combo++;
+
+      if (combo >= COMBO_MIN) comboShowUntil = frameCount + 100;
+
+      playerFlash      = 1;
+      playerFlashColor = '#00ff88';
+      successFlashUntil = frameCount + 6;
+
+      burst(x, y, '#00ff88', '#00ccff', 20, 7);
+      burst(x + WALL_W / 2, y, '#aaffaa', '#ffffff', 8, 4);
+
+      if (wallsCleared % WALLS_PER_LVL === 0) level++;
+
+      if (score > best) {
+        best = score;
+        try { localStorage.setItem('nds_best', best); } catch(e) {}
+      }
+    }
+
+    function onFail(x, y) {
+      burst(x, y, '#ff2200', '#ff8800', 30, 9);
+      burst(x, y, '#ff5500', '#ffaa00', 14, 5);
+      triggerShake();
+      state = 'dead';
+    }
+
+    function triggerShake() {
+      wrap.classList.remove('shaking');
+      void wrap.offsetWidth; // reflow
+      wrap.classList.add('shaking');
+      wrap.addEventListener('animationend', () => wrap.classList.remove('shaking'), { once: true });
+    }
+
+    /* ══════════════════════════════════════
+       BACKGROUND
+    ══════════════════════════════════════ */
+    function drawBg() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, W, H);
+
+      // Stars
+      const spd = state === 'playing' ? wallSpeed() * 0.18 : 1;
+      for (const s of stars) {
+        s.x -= s.spd * spd;
+        if (s.x < 0) s.x = W + 10;
+        ctx.globalAlpha = s.alpha * (0.6 + 0.4 * Math.sin(frameCount * 0.02 + s.y * 10));
+        ctx.fillStyle   = '#aaccff';
+        ctx.fillRect(s.x, s.y * H, s.r, s.r);
+      }
+      ctx.globalAlpha = 1;
+
+      // Grid
+      ctx.strokeStyle = 'rgba(40,0,120,0.09)';
+      ctx.lineWidth   = 1;
+      for (let x = 0; x < W; x += 56) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+      }
+      for (let y = 0; y < H; y += 56) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+      }
+    }
+
+    /* ══════════════════════════════════════
+       HUD
+    ══════════════════════════════════════ */
+    function drawHUD() {
+      // Success flash overlay
+      if (frameCount < successFlashUntil) {
+        ctx.fillStyle = 'rgba(0,255,100,0.07)';
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      // Score
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'top';
+      ctx.font         = 'bold 36px Orbitron, monospace';
+      glow('#ffffff', 22);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(String(score).padStart(5, '0'), W / 2, 14);
+      noGlow();
+
+      // Level badge
+      ctx.textAlign = 'left';
+      ctx.font = '13px Orbitron, monospace';
+      glow('#aa00ff', 10);
+      ctx.fillStyle = '#cc44ff';
+      ctx.fillText('LVL ' + level, 16, 15);
+      noGlow();
+
+      // Speed bar
+      const fill = Math.min((level - 1) / 12, 1);
+      ctx.fillStyle = 'rgba(30,0,60,0.7)';
+      ctx.fillRect(14, 36, 110, 9);
+      if (fill > 0) {
+        const bar = ctx.createLinearGradient(14, 0, 124, 0);
+        bar.addColorStop(0, '#6600cc');
+        bar.addColorStop(1, '#ff00ff');
+        glow('#ff00ff', 8);
+        ctx.fillStyle = bar;
+        ctx.fillRect(14, 36, 110 * fill, 9);
+        noGlow();
+      }
+      ctx.strokeStyle = '#330055';
+      ctx.lineWidth   = 1;
+      ctx.strokeRect(14.5, 36.5, 110, 9);
+
+      ctx.font = '10px Orbitron, monospace';
+      ctx.fillStyle = '#553366';
+      ctx.textAlign = 'left';
+      ctx.fillText('SPEED ×' + level.toFixed(1), 16, 50);
+
+      // Next wall preview
+      drawPreview();
+
+      // Combo
+      if (combo >= COMBO_MIN && frameCount <= comboShowUntil) {
+        const alpha = Math.min(1, (comboShowUntil - frameCount) / 25);
+        ctx.globalAlpha = alpha;
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 24px Orbitron, monospace';
+        const t = frameCount * 0.15;
+        const r = Math.floor(200 + 55 * Math.sin(t));
+        const g = Math.floor(200 + 55 * Math.sin(t + 2));
+        const b = Math.floor(80 + 40 * Math.sin(t + 4));
+        glow(`rgb(${r},${g},${b})`, 20);
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.fillText('×' + combo + ' COMBO!', W / 2, 66);
+        noGlow();
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    function drawPreview() {
+      const nw = getNextUnpassed();
+      if (!nw) return;
+      const px = W - 84;
+      const py = 14;
+      const sz = 38;
+      const col = SHAPE_COL[nw.holeShape];
+      const glw = SHAPE_GLOW[nw.holeShape];
+
+      ctx.textAlign    = 'right';
+      ctx.textBaseline = 'top';
+      ctx.font         = '10px Orbitron, monospace';
+      ctx.fillStyle    = '#445566';
+      ctx.fillText('NEXT', W - 48, py);
+
+      fillShape(nw.holeShape, px, py + sz / 2 + 10, sz, col, glw, 18);
+    }
+
+    /* ══════════════════════════════════════
+       START SCREEN
+    ══════════════════════════════════════ */
+    function drawStart() {
+      drawBg();
+
+      const cx = W / 2;
+      const cy = H / 2;
+
+      // Animated showcase orb
+      const si   = Math.floor(frameCount * 0.012) % 3;
+      const shape = SHAPES[si];
+      const pulse = 1 + 0.06 * Math.sin(frameCount * 0.06);
+      ctx.save();
+      ctx.translate(cx, cy - H * 0.15);
+      ctx.scale(pulse, pulse);
+      ctx.translate(-cx, -(cy - H * 0.15));
+      fillShape(shape, cx, cy - H * 0.15, 90, SHAPE_COL[shape], SHAPE_GLOW[shape], 50);
+      ctx.restore();
+
+      // Scanline ring
+      const t = frameCount * 0.02;
+      for (let i = 0; i < 3; i++) {
+        const rad = 60 + i * 28 + 8 * Math.sin(t + i);
+        ctx.beginPath();
+        ctx.arc(cx, cy - H * 0.15, rad, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(100,0,255,${0.08 - i * 0.025})`;
+        ctx.lineWidth   = 2;
+        ctx.stroke();
+      }
+
+      // Title
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      const title1Y = cy + H * 0.08;
+      ctx.font = 'bold 46px Orbitron, monospace';
+      glow('#00f5ff', 35);
+      ctx.fillStyle = '#00f5ff';
+      ctx.fillText('NEON DASH', cx, title1Y);
+      noGlow();
+
+      ctx.font = 'bold 24px Orbitron, monospace';
+      glow('#ff00ff', 22);
+      ctx.fillStyle = '#ff00ff';
+      ctx.fillText('SHAPE SHIFT', cx, title1Y + 52);
+      noGlow();
+
+      // Blink tap
+      if (Math.floor(frameCount / 30) % 2 === 0) {
+        ctx.font      = '17px Orbitron, monospace';
+        ctx.fillStyle = '#99aacc';
+        glow('#aabbff', 10);
+        ctx.fillText('▶  TAP / SPACE TO START  ◀', cx, title1Y + 108);
+        noGlow();
+      }
+
+      // Best
+      ctx.font      = '14px Orbitron, monospace';
+      ctx.fillStyle = '#445566';
+      ctx.fillText('BEST: ' + String(best).padStart(5, '0'), cx, title1Y + 152);
+
+      // Shape legend
+      const legY = title1Y + 195;
+      ctx.font = '11px Orbitron, monospace';
+      ctx.fillStyle = '#334455';
+      ctx.fillText('TAP TO CYCLE SHAPE  ·  MATCH THE WALL CUTOUT', cx, legY);
+      const labY = legY + 38;
+      const labels = ['CIRCLE', 'TRIANGLE', 'SQUARE'];
+      SHAPES.forEach((s, i) => {
+        const lx = cx + (i - 1) * 100;
+        fillShape(s, lx, labY, 28, SHAPE_COL[s], SHAPE_GLOW[s], 14);
+        ctx.font = '9px Orbitron, monospace';
+        ctx.fillStyle = SHAPE_COL[s];
+        ctx.fillText(labels[i], lx, labY + 24);
+      });
+    }
+
+    /* ══════════════════════════════════════
+       GAME SCREEN
+    ══════════════════════════════════════ */
+    function drawGame() {
+      drawBg();
+      walls.forEach(drawWall);
+      drawParticles();
+      drawPlayer();
+      drawHUD();
+    }
+
+    /* ══════════════════════════════════════
+       GAME OVER SCREEN
+    ══════════════════════════════════════ */
+    function drawDead() {
+      drawBg();
+      walls.forEach(drawWall);
+      drawParticles();
+
+      // Dark overlay
+      ctx.fillStyle = 'rgba(8,4,22,0.82)';
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      const cx = W / 2, cy = H / 2;
+
+      // GAME OVER
+      ctx.font = 'bold 52px Orbitron, monospace';
+      glow('#ff2200', 45);
+      ctx.fillStyle = '#ff4422';
+      ctx.fillText('GAME OVER', cx, cy - H * 0.22);
+      noGlow();
+
+      // Score
+      ctx.font = 'bold 42px Orbitron, monospace';
+      glow('#ffffff', 18);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(String(score).padStart(5, '0'), cx, cy - H * 0.1);
+      noGlow();
+
+      ctx.font = '14px Orbitron, monospace';
+      ctx.fillStyle = '#445566';
+      ctx.fillText('BEST: ' + String(best).padStart(5, '0'), cx, cy - H * 0.03);
+
+      // Level info
+      ctx.font = '12px Orbitron, monospace';
+      ctx.fillStyle = '#334455';
+      ctx.fillText('LEVEL ' + level + '  ·  WALLS ' + wallsCleared + '  ·  SPEED ×' + level.toFixed(1), cx, cy + H * 0.03);
+
+      // PLAY AGAIN button
+      const bw = 248, bh = 58;
+      const bx = cx - bw / 2;
+      const by1 = cy + H * 0.1;
+      drawBtn(bx, by1, bw, bh, '#00f5ff', '#001833', 'PLAY AGAIN');
+      btnPlayAgain = { x: bx, y: by1, w: bw, h: bh };
+
+      // CONTINUE button
+      const by2 = cy + H * 0.22;
+      if (!continueUsed) {
+        drawBtn(bx, by2, bw, bh, '#ffcc00', '#221800', 'CONTINUE?  (WATCH AD)');
+        btnContinue = { x: bx, y: by2, w: bw, h: bh };
+      } else {
+        ctx.font = '12px Orbitron, monospace';
+        ctx.fillStyle = '#334455';
+        ctx.fillText('CONTINUE ALREADY USED', cx, by2 + bh / 2);
+        btnContinue = null;
+      }
+    }
+
+    function drawBtn(x, y, w, h, col, bgCol, label) {
+      // bg
+      const grad = ctx.createLinearGradient(x, y, x, y + h);
+      grad.addColorStop(0, bgCol);
+      grad.addColorStop(1, BG);
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.fill();
+      // border
+      glow(col, 18);
+      ctx.strokeStyle = col;
+      ctx.lineWidth   = 2;
+      ctx.beginPath(); ctx.roundRect(x + 1, y + 1, w - 2, h - 2, 11); ctx.stroke();
+      noGlow();
+      // label
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font         = 'bold 14px Orbitron, monospace';
+      glow(col, 12);
+      ctx.fillStyle = col;
+      ctx.fillText(label, x + w / 2, y + h / 2);
+      noGlow();
+    }
+
+    function inRect(mx, my, r) {
+      return mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
+    }
+
+    /* ══════════════════════════════════════
+       GAME OVER BUTTON HANDLER
+    ══════════════════════════════════════ */
+    function handleDeadClick(mx, my) {
+      if (btnPlayAgain && inRect(mx, my, btnPlayAgain)) {
+        state = 'playing';
+        initGame();
+      } else if (btnContinue && !continueUsed && inRect(mx, my, btnContinue)) {
+        continueUsed = true;
+        // Remove the failing wall (already passed=true), keep score
+        particles = [];
+        playerFlash = 0;
+        // Find and purge passed walls
+        walls = walls.filter(w => !w.passed || w.x > W / 2);
+        state = 'playing';
+      }
+    }
+
+    /* ══════════════════════════════════════
+       INPUT
+    ══════════════════════════════════════ */
+    function handleTap(mx, my) {
+      if (state === 'start') {
+        state = 'playing';
+        initGame();
+        return;
+      }
+      if (state === 'dead') {
+        handleDeadClick(mx, my);
+        return;
+      }
+      if (state === 'playing') {
+        shapeIdx = (shapeIdx + 1) % 3;
+        combo    = 0; // shape switch resets combo
+      }
+    }
+
+    canvas.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      handleTap(e.clientX, e.clientY);
+    });
+
+    canvas.addEventListener('click', e => {
+      // fallback
+    });
+
+    window.addEventListener('keydown', e => {
+      if (['Space', 'ArrowUp', 'ArrowRight', 'KeyW'].includes(e.code)) {
+        e.preventDefault();
+        if (state === 'start' || state === 'dead') {
+          if (state === 'dead') { state = 'playing'; initGame(); }
+          else { state = 'playing'; initGame(); }
+          return;
+        }
+        if (state === 'playing') { shapeIdx = (shapeIdx + 1) % 3; combo = 0; }
+      }
+    });
+
+    /* ══════════════════════════════════════
+       MAIN LOOP
+    ══════════════════════════════════════ */
+    function update() {
+      frameCount++;
+
+      if (state !== 'playing') { updateParticles(); return; }
+
+      // Spawn
+      nextWallTimer++;
+      if (nextWallTimer >= wallInterval) {
+        nextWallTimer = 0;
+        wallInterval  = Math.max(WALL_INTERVAL_MIN, WALL_INTERVAL_BASE - (level - 1) * 4);
+        spawnWall();
+      }
+
+      // Move
+      const spd = wallSpeed();
+      for (let i = walls.length - 1; i >= 0; i--) {
+        walls[i].x -= spd;
+        if (walls[i].x < -WALL_W - 20) walls.splice(i, 1);
+      }
+
+      checkCollisions();
+      updateParticles();
+    }
+
+    function loop(ts) {
+      const dt = Math.min((ts - lastTime) / 16.667, 3);
+      lastTime = ts;
+
+      update();
+
+      if      (state === 'start')   drawStart();
+      else if (state === 'playing') drawGame();
+      else                          drawDead();
+
+      requestAnimationFrame(loop);
+    }
+
+    requestAnimationFrame(ts => { lastTime = ts; requestAnimationFrame(loop); });
+
+  })();
+  </script>
+</body>
+</html>
