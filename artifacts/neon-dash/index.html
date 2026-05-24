@@ -109,16 +109,16 @@
   const BG        = '#0a0a1a';
   const PX_PCT    = 0.18;
   const WALL_W    = 72;
-  const BASE_SPD  = 6.5;
-  const SPD_INC   = 0.95;
+  const BASE_SPD  = 5.2;
+  const SPD_INC   = 0.65;
   const WALLS_LVL = 10;
   const COMBO_MIN = 5;
-  const IVBASE    = 70;
-  const IVMIN     = 36;
+  const IVBASE    = 95;
+  const IVMIN     = 52;
   const BOB_AMP   = 0.25;
   const BOB_FREQ  = 0.048;
   const HOLE_ZONES = [0.28, 0.50, 0.72];
-  function holeSize() { return Math.max(82, 118 - (level - 1) * 4); }
+  function holeSize() { return Math.max(95, 132 - (level - 1) * 3); }
 
   /* ══════════════ STATE ══════════════ */
   let state = 'start';
@@ -984,7 +984,7 @@
     nextWallTimer++;
     if (nextWallTimer >= wallInterval) {
       nextWallTimer = 0;
-      wallInterval  = Math.max(IVMIN, IVBASE - (level-1)*4);
+      wallInterval  = Math.max(IVMIN, IVBASE - (level-1)*3);
       spawnWall();
     }
 
