@@ -124,7 +124,9 @@
   let state = 'start';
   let score = 0, best = 0, combo = 0, shapeIdx = 0;
   let wallsCleared = 0, level = 1;
-  let playerY = 0, playerRot = 0;
+  let playerY = 0, playerRot = 0, baseY = 0;
+  let targetZone = 1;          // 0 = top, 1 = mid, 2 = bot
+  let touchStartX = 0, touchStartY = 0;
   let playerFlash = 0, playerFlashCol = '#00ff88';
   let walls = [], particles = [], stars = [];
   let nextWallTimer = 0, wallInterval = IVBASE;
@@ -322,6 +324,8 @@
     nextWallTimer = 0; wallInterval = IVBASE;
     continueUsed = false; comboShowUntil = successFlashUntil = 0;
     frameCount = 0;
+    targetZone = 1;
+    baseY      = HOLE_ZONES[1] * H;
     spawnWall();
     Snd.stopMusic();
     Snd.startMusic();
@@ -762,15 +766,29 @@
 
     for (let z = 0; z < 3; z++) {
       const zy  = barY0 + HOLE_ZONES[z] * barH;
-      const col = (nw && nw.holeZone===z) ? SCOL[nw.holeShape] : '#334455';
-      const r   = (nw && nw.holeZone===z) ? 5 : 3;
-      glow(col, (nw && nw.holeZone===z) ? 10 : 0);
+      const isTarget = (nw && nw.holeZone===z);
+      const col = isTarget ? SCOL[nw.holeShape] : '#334455';
+      const r   = isTarget ? 5 : 3;
+      glow(col, isTarget ? 10 : 0);
       ctx.fillStyle = col; ctx.beginPath(); ctx.arc(barX, zy, r, 0, Math.PI*2); ctx.fill(); noGlow();
     }
-    // Player tracker dot
-    const pf   = Math.max(0, Math.min(1, (playerY - barY0) / barH));
+
+    // Target-zone arrow (shows where player is heading)
+    const tarY  = barY0 + HOLE_ZONES[targetZone] * barH;
+    const ps    = SHAPES[shapeIdx];
+    const arrowPulse = 0.6 + 0.4 * Math.sin(frameCount * 0.15);
+    ctx.globalAlpha = arrowPulse;
+    glow(SCOL[ps], 10); ctx.fillStyle = SCOL[ps];
+    ctx.beginPath();
+    ctx.moveTo(barX - 12, tarY);
+    ctx.lineTo(barX - 6,  tarY - 5);
+    ctx.lineTo(barX - 6,  tarY + 5);
+    ctx.closePath(); ctx.fill(); noGlow();
+    ctx.globalAlpha = 1;
+
+    // Player current-position dot
+    const pf    = Math.max(0, Math.min(1, (playerY - barY0) / barH));
     const pdotY = barY0 + pf * barH;
-    const ps   = SHAPES[shapeIdx];
     glow(SCOL[ps], 14); ctx.fillStyle = SCOL[ps];
     ctx.beginPath(); ctx.arc(barX, pdotY, 5, 0, Math.PI*2); ctx.fill(); noGlow();
   }
@@ -884,10 +902,14 @@
 
     const col2x = cx + W * 0.04;
     const rows = [
-      ['← / A / L-CLICK',   'Previous shape'],
+      ['← / A / L-CLICK',        'Previous shape'],
       ['→ / D / SPACE / R-CLICK', 'Next shape'],
-      ['M',                  'Mute / unmute music'],
-      ['ESC',                'Back to menu'],
+      ['↑ / W',                   'Move to zone above'],
+      ['↓ / S',                   'Move to zone below'],
+      ['TOUCH: swipe up / down',  'Change zone'],
+      ['TOUCH: tap left / right', 'Change shape'],
+      ['M',                       'Mute / unmute music'],
+      ['ESC',                     'Back to menu'],
     ];
     rows.forEach(([key, desc]) => {
       ctx.font = 'bold 10px Orbitron, monospace';
@@ -1051,6 +1073,8 @@
 
   function cycleNext() { shapeIdx = (shapeIdx + 1) % SHAPES.length; combo = 0; Snd.cycle(true); }
   function cyclePrev() { shapeIdx = (shapeIdx - 1 + SHAPES.length) % SHAPES.length; combo = 0; Snd.cycle(false); }
+  function zoneUp()   { if (targetZone > 0) { targetZone--; Snd.cycle(true); } }
+  function zoneDown() { if (targetZone < 2) { targetZone++; Snd.cycle(false); } }
 
   canvas.addEventListener('pointerdown', e => {
     e.preventDefault();
@@ -1091,10 +1115,27 @@
     }
 
     if (state === 'playing') {
-      // Right click (button=2) → next; Left click (button=0 or touch) → prev
-      // Touch: right half = next, left half = prev
-      const isRight = e.button === 2 || (e.pointerType === 'touch' && e.clientX > W/2);
-      if (isRight) cycleNext(); else cyclePrev();
+      if (e.pointerType === 'touch') {
+        // Record start position — shape cycle fires on pointerup after checking for swipe
+        touchStartX = e.clientX;
+        touchStartY = e.clientY;
+      } else {
+        // Mouse: right-click = next, left-click = prev (immediate)
+        if (e.button === 2) cycleNext(); else cyclePrev();
+      }
+    }
+  });
+
+  canvas.addEventListener('pointerup', e => {
+    if (state !== 'playing' || e.pointerType !== 'touch') return;
+    const dx = e.clientX - touchStartX;
+    const dy = e.clientY - touchStartY;
+    if (Math.abs(dy) > 35 && Math.abs(dy) > Math.abs(dx)) {
+      // Vertical swipe → change zone
+      if (dy < 0) zoneUp(); else zoneDown();
+    } else if (Math.abs(dx) < 50 && Math.abs(dy) < 50) {
+      // Tap → change shape (left half = prev, right half = next)
+      if (e.clientX > W / 2) cycleNext(); else cyclePrev();
     }
   });
 
@@ -1110,7 +1151,9 @@
 
     const fwd  = ['ArrowRight','KeyD','KeyE','Period'].includes(e.code);
     const back = ['ArrowLeft', 'KeyA','KeyQ','Comma'].includes(e.code);
-    const any  = fwd || back || e.code === 'Space';
+    const up   = ['ArrowUp',   'KeyW','KeyI'].includes(e.code);
+    const down = ['ArrowDown', 'KeyS','KeyK'].includes(e.code);
+    const any  = fwd || back || up || down || e.code === 'Space';
 
     if (!any) return;
     e.preventDefault();
@@ -1121,13 +1164,17 @@
     if (state === 'playing') {
       if (fwd || e.code === 'Space') cycleNext();
       else if (back) cyclePrev();
+      else if (up)   zoneUp();
+      else if (down) zoneDown();
     }
   });
 
   /* ══════════════ MAIN LOOP ══════════════ */
   function update() {
     frameCount++;
-    playerY   = H/2 + Math.sin(frameCount * BOB_FREQ) * (H * BOB_AMP);
+    const zoneTargetY = HOLE_ZONES[targetZone] * H;
+    baseY  += (zoneTargetY - baseY) * 0.10;
+    playerY = baseY + Math.sin(frameCount * BOB_FREQ) * (H * BOB_AMP * 0.18);
     playerRot += ROT_SPD[SHAPES[shapeIdx]];
 
     if (state !== 'playing') { updateParticles(); return; }
