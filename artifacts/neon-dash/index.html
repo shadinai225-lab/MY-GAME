@@ -127,6 +127,9 @@
   let playerY = 0, playerRot = 0, baseY = 0;
   let targetZone = 1;          // 0 = top, 1 = mid, 2 = bot
   let touchStartX = 0, touchStartY = 0;
+  const TRAIL_LEN  = 32;
+  const trailY     = new Float32Array(TRAIL_LEN);
+  let   trailHead  = 0;
   let playerFlash = 0, playerFlashCol = '#00ff88';
   let walls = [], particles = [], stars = [];
   let nextWallTimer = 0, wallInterval = IVBASE;
@@ -525,11 +528,12 @@
     ctx.save();
     ctx.translate(px, py); ctx.scale(breathe, breathe); ctx.translate(-px, -py);
 
-    // Curved trail — ghost copies at previous bob positions
+    // Ghost trail — sampled from actual position history
     for (let i = 4; i >= 1; i--) {
-      const prevY = H/2 + Math.sin((frameCount - i*4) * BOB_FREQ) * (H * BOB_AMP);
-      ctx.globalAlpha = 0.1 * (5 - i);
-      fillShape(shape, px - i*13, prevY, 58*(1-i*0.04), col, glowCol, 6,
+      const idx  = (trailHead - 1 - i * 6 + TRAIL_LEN * 100) % TRAIL_LEN;
+      const prevY = trailY[idx] || playerY;
+      ctx.globalAlpha = 0.09 * (5 - i);
+      fillShape(shape, px - i*12, prevY, 56*(1-i*0.05), col, glowCol, 0,
                 playerRot * (1 - i*0.12));
     }
     ctx.globalAlpha = 1;
@@ -1293,6 +1297,8 @@
     baseY  += (zoneTargetY - baseY) * 0.10;
     playerY = baseY + Math.sin(frameCount * BOB_FREQ) * (H * BOB_AMP * 0.18);
     playerRot += ROT_SPD[SHAPES[shapeIdx]];
+    trailY[trailHead % TRAIL_LEN] = playerY;
+    trailHead++;
 
     if (state === 'ad') {
       adTimer++;
