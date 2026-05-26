@@ -111,14 +111,15 @@
   const WALL_W    = 72;
   const BASE_SPD  = 5.2;
   const SPD_INC   = 0.65;
-  const WALLS_LVL = 10;
+  const WALLS_LVL = 5;
   const COMBO_MIN = 5;
   const IVBASE    = 95;
-  const IVMIN     = 52;
+  const IVMIN     = 32;
   const BOB_AMP   = 0.25;
   const BOB_FREQ  = 0.048;
   const HOLE_ZONES = [0.28, 0.50, 0.72];
-  function holeSize() { return Math.max(95, 132 - (level - 1) * 3); }
+  function holeSize()  { return Math.max(95, 132 - (level - 1) * 3); }
+  function numShapes() { return Math.min(SHAPES.length, 3 + Math.floor((level - 1) / 3)); }
 
   /* ══════════════ STATE ══════════════ */
   let state = 'start';
@@ -354,7 +355,7 @@
   }
 
   /* ══════════════ WALLS ══════════════ */
-  function rndShape() { return SHAPES[Math.floor(Math.random() * SHAPES.length)]; }
+  function rndShape() { return SHAPES[Math.floor(Math.random() * numShapes())]; }
 
   function spawnWall() {
     walls.push({
@@ -553,6 +554,7 @@
 
   /* ══════════════ SHAPE SELECTOR HUD (bottom) ══════════════ */
   function drawShapeBar() {
+    const ns    = numShapes();
     const total = SHAPES.length;
     const slotW = 52, slotH = 52, gap = 8;
     const barW  = total * slotW + (total - 1) * gap;
@@ -560,29 +562,45 @@
     const barY  = H - 80;
 
     for (let i = 0; i < total; i++) {
-      const s   = SHAPES[i];
+      const s      = SHAPES[i];
+      const locked = i >= ns;
       const sx  = barX + i * (slotW + gap) + slotW/2;
       const sy  = barY + slotH/2;
-      const sel = i === shapeIdx;
-      const col = SCOL[s];
+      const sel = !locked && i === shapeIdx;
+      const col = locked ? '#222233' : SCOL[s];
+
+      ctx.globalAlpha = locked ? 0.35 : 1;
 
       // Slot bg
-      ctx.fillStyle = sel ? col + '22' : 'rgba(20,0,40,0.55)';
+      ctx.fillStyle = sel ? SCOL[s] + '22' : 'rgba(20,0,40,0.55)';
       ctx.beginPath(); ctx.roundRect(barX + i*(slotW+gap), barY, slotW, slotH, 8); ctx.fill();
 
       // Border
-      if (sel) { glow(col, 16); ctx.strokeStyle = col; }
-      else      { ctx.strokeStyle = '#330055'; }
+      if (sel) { glow(SCOL[s], 16); ctx.strokeStyle = SCOL[s]; }
+      else      { ctx.strokeStyle = locked ? '#1a1a2e' : '#330055'; }
       ctx.lineWidth = sel ? 2 : 1;
       ctx.beginPath(); ctx.roundRect(barX + i*(slotW+gap) + 0.5, barY + 0.5, slotW - 1, slotH - 1, 8);
       ctx.stroke(); noGlow();
 
-      // Shape icon (spinning) — skip glow on unselected to avoid shadowBlur overhead
-      const rot = frameCount * ROT_SPD[s];
-      const sz  = sel ? 32 : 26;
-      fillShape(s, sx, sy, sz, col, SGLOW[s], sel ? 16 : 0, rot);
+      if (locked) {
+        // Show lock icon
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.font = '18px Orbitron, monospace';
+        ctx.fillStyle = '#334';
+        ctx.fillText('🔒', sx, sy - 4);
+        // Unlock hint
+        const unlockLvl = (i - 2) * 3 + 1;
+        ctx.font = '7px Orbitron, monospace';
+        ctx.fillStyle = '#445';
+        ctx.fillText('LVL ' + unlockLvl, sx, sy + 14);
+      } else {
+        // Shape icon (spinning) — skip glow on unselected to avoid shadowBlur overhead
+        const rot = frameCount * ROT_SPD[s];
+        const sz  = sel ? 32 : 26;
+        fillShape(s, sx, sy, sz, col, SGLOW[s], sel ? 16 : 0, rot);
+      }
 
-      // Index indicator dots (prev/next arrows)
+      ctx.globalAlpha = 1;
     }
 
     // ◀ ▶ labels
@@ -710,11 +728,6 @@
 
   /* ══════════════ HUD ══════════════ */
   function drawHUD() {
-    if (frameCount < successFlashUntil) {
-      ctx.fillStyle = 'rgba(0,255,100,0.07)';
-      ctx.fillRect(0, 0, W, H);
-    }
-
     // Score
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     ctx.font = 'bold 36px Orbitron, monospace';
@@ -1194,8 +1207,8 @@
   canvas.addEventListener('contextmenu', e => e.preventDefault());
   wrap.addEventListener('contextmenu',   e => e.preventDefault());
 
-  function cycleNext() { shapeIdx = (shapeIdx + 1) % SHAPES.length; combo = 0; Snd.cycle(true); }
-  function cyclePrev() { shapeIdx = (shapeIdx - 1 + SHAPES.length) % SHAPES.length; combo = 0; Snd.cycle(false); }
+  function cycleNext() { shapeIdx = (shapeIdx + 1) % numShapes(); combo = 0; Snd.cycle(true); }
+  function cyclePrev() { shapeIdx = (shapeIdx - 1 + numShapes()) % numShapes(); combo = 0; Snd.cycle(false); }
   function zoneUp()   { if (targetZone > 0) { targetZone--; Snd.cycle(true); } }
   function zoneDown() { if (targetZone < 2) { targetZone++; Snd.cycle(false); } }
 
@@ -1314,7 +1327,7 @@
     nextWallTimer++;
     if (nextWallTimer >= wallInterval) {
       nextWallTimer = 0;
-      wallInterval  = Math.max(IVMIN, IVBASE - (level-1)*3);
+      wallInterval  = Math.max(IVMIN, IVBASE - (level-1)*9);
       spawnWall();
     }
 
