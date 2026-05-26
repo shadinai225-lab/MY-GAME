@@ -154,6 +154,7 @@
   let frameCount = 0, lastTime = 0;
   let continueUsed = false;
   let comboShowUntil = 0, successFlashUntil = 0;
+  let unlockBanner = null; // { shape, timer } — counts down from 200
   let btnPlay = null, btnContinue = null, btnMute = null, btnGuide = null, btnGuideBack = null, btnSkipAd = null;
   const AD_DURATION   = 300; // frames (~5 s at 60 fps)
   const AD_SKIP_AFTER = 180; // frames (~3 s)
@@ -360,7 +361,7 @@
     playerFlashCol = SCOL.circle;
     walls = []; particles = [];
     nextWallTimer = 0; wallInterval = IVBASE;
-    continueUsed = false; comboShowUntil = successFlashUntil = 0;
+    continueUsed = false; comboShowUntil = successFlashUntil = 0; unlockBanner = null;
     frameCount = 0;
     targetZone = 1;
     baseY      = HOLE_ZONES[1] * H;
@@ -741,7 +742,14 @@
     burst(x, y, '#00ff88', '#00ccff', 22, 7);
     burst(x+30, y, '#aaffaa', '#ffffff', 8, 4);
     Snd.success();
-    if (wallsCleared % WALLS_LVL === 0) { level++; Snd.levelUp(); }
+    if (wallsCleared % WALLS_LVL === 0) {
+      const nsBefore = numShapes();
+      level++; Snd.levelUp();
+      if (numShapes() > nsBefore) {
+        unlockBanner = { shape: SHAPES[numShapes() - 1], timer: 200 };
+        burst(W/2, H/2, SCOL[SHAPES[numShapes()-1]], '#ffffff', 40, 9);
+      }
+    }
     if (score > best) {
       best = score;
       try { localStorage.setItem('nds_best', best); } catch(_) {}
@@ -1199,6 +1207,62 @@
   }
 
   /* ══════════════ GAME SCREEN ══════════════ */
+  function drawUnlockBanner() {
+    if (!unlockBanner) return;
+    unlockBanner.timer--;
+    if (unlockBanner.timer <= 0) { unlockBanner = null; return; }
+
+    const t     = unlockBanner.timer;
+    const total = 200;
+    // Fade in over first 20 frames, hold, fade out over last 40 frames
+    let alpha = 1;
+    if (t > total - 20) alpha = (total - t) / 20;
+    else if (t < 40)    alpha = t / 40;
+
+    // Slide in from top: starts off-screen, settles at target Y
+    const slideT  = Math.min(1, (total - t) / 18);
+    const ease    = 1 - Math.pow(1 - slideT, 3);
+    const targetY = H * 0.36;
+    const bannerY = -120 + ease * (targetY + 120);
+
+    const shape = unlockBanner.shape;
+    const col   = SCOL[shape];
+    const glw   = SGLOW[shape];
+    const bw = 320, bh = 108, bx = W/2 - bw/2;
+
+    ctx.globalAlpha = alpha;
+
+    // Panel
+    ctx.fillStyle = 'rgba(6,2,20,0.92)';
+    ctx.beginPath(); ctx.roundRect(bx, bannerY, bw, bh, 16); ctx.fill();
+    glow(col, 30);
+    ctx.strokeStyle = col; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(bx+1, bannerY+1, bw-2, bh-2, 15); ctx.stroke(); noGlow();
+
+    // Header text
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.font = 'bold 11px Orbitron, monospace';
+    glow(col, 10); ctx.fillStyle = col;
+    ctx.fillText('NEW SHAPE UNLOCKED!', W/2, bannerY + 10); noGlow();
+
+    // Spinning shape icon
+    const rot = frameCount * ROT_SPD[shape] * 1.6;
+    fillShape(shape, W/2 - 68, bannerY + bh/2 + 6, 50, col, glw, 28, rot);
+
+    // Shape name
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.font = 'bold 22px Orbitron, monospace';
+    glow(col, 18); ctx.fillStyle = col;
+    ctx.fillText(SHAPE_LABELS[shape], W/2 - 36, bannerY + bh/2 - 8); noGlow();
+
+    // Sub-label
+    ctx.font = '10px Orbitron, monospace';
+    ctx.fillStyle = '#667788';
+    ctx.fillText('NOW AVAILABLE IN ROTATION', W/2 - 36, bannerY + bh/2 + 18);
+
+    ctx.globalAlpha = 1;
+  }
+
   function drawGame() {
     drawBg();
     drawZoneLines();
@@ -1207,6 +1271,7 @@
     drawPlayer();
     drawHUD();
     drawShapeBar();
+    drawUnlockBanner();
   }
 
   /* ══════════════ GAME OVER ══════════════ */
