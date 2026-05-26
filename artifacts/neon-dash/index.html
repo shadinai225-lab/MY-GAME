@@ -346,6 +346,8 @@
     frameCount = 0;
     targetZone = 1;
     baseY      = HOLE_ZONES[1] * H;
+    trailY.fill(baseY);
+    trailHead  = 0;
     spawnWall();
     Snd.stopMusic();
     Snd.startMusic();
@@ -644,7 +646,7 @@
         w.passed = true;
         const hy     = getHoleY(w);
         const hs     = holeSize();
-        const yMatch = Math.abs(playerY - hy) < hs * 0.42;
+        const yMatch = Math.abs(playerY - hy) < hs * 0.52;
         const sMatch = SHAPES[shapeIdx] === w.holeShape;
         if (sMatch && yMatch) onSuccess(px, playerY);
         else                  onFail(px, playerY);
@@ -674,6 +676,7 @@
     burst(x, y, '#ff5500', '#ffaa00', 16, 5);
     Snd.fail();
     Snd.stopMusic();
+    document.body.classList.remove('playing');
     triggerShake(); state = 'dead';
   }
 
@@ -786,7 +789,7 @@
     ctx.beginPath(); ctx.roundRect(barX-4, barY0, 8, barH, 4); ctx.fill();
 
     for (let z = 0; z < 3; z++) {
-      const zy  = barY0 + HOLE_ZONES[z] * barH;
+      const zy  = HOLE_ZONES[z] * H;   // actual screen Y — matches player tracker scale
       const isTarget = (nw && nw.holeZone===z);
       const col = isTarget ? SCOL[nw.holeShape] : '#334455';
       const r   = isTarget ? 5 : 3;
@@ -795,7 +798,7 @@
     }
 
     // Target-zone arrow (shows where player is heading)
-    const tarY  = barY0 + HOLE_ZONES[targetZone] * barH;
+    const tarY  = HOLE_ZONES[targetZone] * H;
     const ps    = SHAPES[shapeIdx];
     const arrowPulse = 0.6 + 0.4 * Math.sin(frameCount * 0.15);
     ctx.globalAlpha = arrowPulse;
@@ -1119,6 +1122,7 @@
     continueUsed = true; particles = []; playerFlash = 0;
     walls = walls.filter(w => !w.passed);
     Snd.stopMusic(); Snd.startMusic();
+    document.body.classList.add('playing');
     state = 'playing';
   }
 
