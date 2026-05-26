@@ -151,12 +151,27 @@
     const LOOKAHEAD = 0.1;
     const TICK_MS   = 50;
 
+    // Pre-cached noise buffers — avoids per-call AudioBuffer allocation
+    const NOISE_POOL = 8;
+    let noisePool = null, noiseIdx = 0;
+    function buildNoisePool() {
+      noisePool = [];
+      const len = Math.ceil(ac.sampleRate * 0.32); // longest noise we need (~0.2s snare)
+      for (let i = 0; i < NOISE_POOL; i++) {
+        const buf  = ac.createBuffer(1, len, ac.sampleRate);
+        const data = buf.getChannelData(0);
+        for (let j = 0; j < len; j++) data[j] = Math.random() * 2 - 1;
+        noisePool.push(buf);
+      }
+    }
+
     function init() {
       if (ac) return;
       ac = new (window.AudioContext || window.webkitAudioContext)();
       master = ac.createGain();
       master.gain.value = 1;
       master.connect(ac.destination);
+      buildNoisePool();
     }
     function resume() { if (ac && ac.state === 'suspended') ac.resume(); }
 
@@ -174,13 +189,9 @@
     }
 
     function noise(t, dur, vol, lpHz, lpEnd) {
-      if (!ac) return;
-      const len  = Math.ceil(ac.sampleRate * (dur + 0.05));
-      const buf  = ac.createBuffer(1, len, ac.sampleRate);
-      const data = buf.getChannelData(0);
-      for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+      if (!ac || !noisePool) return;
       const src  = ac.createBufferSource();
-      src.buffer = buf;
+      src.buffer = noisePool[noiseIdx++ % NOISE_POOL]; // reuse cached buffer
       const filt = ac.createBiquadFilter();
       filt.type  = 'lowpass';
       filt.frequency.setValueAtTime(lpHz, t);
@@ -193,9 +204,12 @@
     }
 
     // ── SFX ──
+    let lastCycleT = 0;
     function cycle(forward) {
       if (!ac) return;
       const t = ac.currentTime;
+      if (t - lastCycleT < 0.08) return; // debounce rapid firing
+      lastCycleT = t;
       const f = forward ? 660 : 440;
       osc(f,         'sine', t,       0.07, 0.18);
       osc(f * (forward ? 1.5 : 0.67), 'sine', t + 0.04, 0.05, 0.09);
@@ -557,10 +571,10 @@
       ctx.beginPath(); ctx.roundRect(barX + i*(slotW+gap) + 0.5, barY + 0.5, slotW - 1, slotH - 1, 8);
       ctx.stroke(); noGlow();
 
-      // Shape icon (spinning)
+      // Shape icon (spinning) — skip glow on unselected to avoid shadowBlur overhead
       const rot = frameCount * ROT_SPD[s];
       const sz  = sel ? 32 : 26;
-      fillShape(s, sx, sy, sz, col, SGLOW[s], sel ? 16 : 5, rot);
+      fillShape(s, sx, sy, sz, col, SGLOW[s], sel ? 16 : 0, rot);
 
       // Index indicator dots (prev/next arrows)
     }
