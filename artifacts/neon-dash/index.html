@@ -74,35 +74,52 @@
 
   /* ══════════════ SHAPES ══════════════ */
   // 6 shapes — ordered for cycling
-  const SHAPES = ['circle', 'triangle', 'square', 'diamond', 'pentagon', 'star'];
+  const SHAPES = ['circle','triangle','square','diamond','pentagon','star','hexagon','cross','arrow','lightning','heart'];
   const SCOL = {
-    circle:   '#00f5ff',
-    triangle: '#ff00ff',
-    square:   '#aaff00',
-    diamond:  '#ff6600',
-    pentagon: '#00ffaa',
-    star:     '#ffdd00',
+    circle:    '#00f5ff',
+    triangle:  '#ff00ff',
+    square:    '#aaff00',
+    diamond:   '#ff6600',
+    pentagon:  '#00ffaa',
+    star:      '#ffdd00',
+    hexagon:   '#bb44ff',
+    cross:     '#00ffdd',
+    arrow:     '#ff8833',
+    lightning: '#ffff33',
+    heart:     '#ff1177',
   };
   const SGLOW = {
-    circle:   '#007aff',
-    triangle: '#cc00cc',
-    square:   '#77cc00',
-    diamond:  '#cc3300',
-    pentagon: '#00cc77',
-    star:     '#ccaa00',
+    circle:    '#007aff',
+    triangle:  '#cc00cc',
+    square:    '#77cc00',
+    diamond:   '#cc3300',
+    pentagon:  '#00cc77',
+    star:      '#ccaa00',
+    hexagon:   '#8800dd',
+    cross:     '#00aa88',
+    arrow:     '#cc5500',
+    lightning: '#aaaa00',
+    heart:     '#cc0055',
   };
   // Spin speed (rad/frame). Circle=0, others vary
   const ROT_SPD = {
-    circle:   0,
-    triangle: 0.055,
-    square:   0.034,
-    diamond:  0.046,
-    pentagon: 0.028,
-    star:     0.068,
+    circle:    0,
+    triangle:  0.055,
+    square:    0.034,
+    diamond:   0.046,
+    pentagon:  0.028,
+    star:      0.068,
+    hexagon:   0.022,
+    cross:     0.050,
+    arrow:     0.040,
+    lightning: 0.030,
+    heart:     0.018,
   };
   const SHAPE_LABELS = {
     circle: 'CIRCLE', triangle: 'TRIANGLE', square: 'SQUARE',
     diamond: 'DIAMOND', pentagon: 'PENTAGON', star: 'STAR',
+    hexagon: 'HEXAGON', cross: 'CROSS', arrow: 'ARROW',
+    lightning: 'LIGHTNING', heart: 'HEART',
   };
 
   /* ══════════════ CONSTANTS ══════════════ */
@@ -119,7 +136,7 @@
   const BOB_FREQ  = 0.048;
   const HOLE_ZONES = [0.28, 0.50, 0.72];
   function holeSize()  { return Math.max(95, 132 - (level - 1) * 3); }
-  function numShapes() { return Math.min(SHAPES.length, 3 + Math.floor((level - 1) / 3)); }
+  function numShapes() { return Math.min(SHAPES.length, 3 + Math.floor((level - 1) / 2)); }
 
   /* ══════════════ STATE ══════════════ */
   let state = 'start';
@@ -418,6 +435,48 @@
         k === 0 ? ctx2d.moveTo(px2, py2) : ctx2d.lineTo(px2, py2);
       }
       ctx2d.closePath();
+    } else if (shape === 'hexagon') {
+      for (let k = 0; k < 6; k++) {
+        const a = (Math.PI * 2 * k / 6) - Math.PI / 2;
+        const px2 = x + r * Math.cos(a);
+        const py2 = y + r * Math.sin(a);
+        k === 0 ? ctx2d.moveTo(px2, py2) : ctx2d.lineTo(px2, py2);
+      }
+      ctx2d.closePath();
+    } else if (shape === 'cross') {
+      const arm = r * 0.38, ext = r * 0.92;
+      ctx2d.moveTo(x - ext, y - arm); ctx2d.lineTo(x - arm, y - arm);
+      ctx2d.lineTo(x - arm, y - ext); ctx2d.lineTo(x + arm, y - ext);
+      ctx2d.lineTo(x + arm, y - arm); ctx2d.lineTo(x + ext, y - arm);
+      ctx2d.lineTo(x + ext, y + arm); ctx2d.lineTo(x + arm, y + arm);
+      ctx2d.lineTo(x + arm, y + ext); ctx2d.lineTo(x - arm, y + ext);
+      ctx2d.lineTo(x - arm, y + arm); ctx2d.lineTo(x - ext, y + arm);
+      ctx2d.closePath();
+    } else if (shape === 'arrow') {
+      const aw = r * 0.42, tip = r * 0.95, tail = r * 0.90, notch = r * 0.40;
+      ctx2d.moveTo(x + tip,    y);
+      ctx2d.lineTo(x + notch,  y - aw);
+      ctx2d.lineTo(x + notch,  y - aw * 0.42);
+      ctx2d.lineTo(x - tail,   y - aw * 0.42);
+      ctx2d.lineTo(x - tail,   y + aw * 0.42);
+      ctx2d.lineTo(x + notch,  y + aw * 0.42);
+      ctx2d.lineTo(x + notch,  y + aw);
+      ctx2d.closePath();
+    } else if (shape === 'lightning') {
+      ctx2d.moveTo(x + r * 0.28,  y - r * 0.98);
+      ctx2d.lineTo(x - r * 0.14,  y - r * 0.08);
+      ctx2d.lineTo(x + r * 0.26,  y - r * 0.08);
+      ctx2d.lineTo(x - r * 0.28,  y + r * 0.98);
+      ctx2d.lineTo(x + r * 0.16,  y + r * 0.08);
+      ctx2d.lineTo(x - r * 0.22,  y + r * 0.08);
+      ctx2d.closePath();
+    } else if (shape === 'heart') {
+      const s = r * 0.88;
+      ctx2d.moveTo(x, y + s * 0.82);
+      ctx2d.bezierCurveTo(x - s * 1.18, y + s * 0.08, x - s * 1.38, y - s * 0.82, x - s * 0.48, y - s * 0.72);
+      ctx2d.bezierCurveTo(x - s * 0.12, y - s * 1.08, x + s * 0.12, y - s * 1.08, x + s * 0.48, y - s * 0.72);
+      ctx2d.bezierCurveTo(x + s * 1.38, y - s * 0.82, x + s * 1.18, y + s * 0.08, x, y + s * 0.82);
+      ctx2d.closePath();
     }
 
     if (hasRot) ctx2d.restore();
@@ -589,7 +648,7 @@
         ctx.fillStyle = '#334';
         ctx.fillText('🔒', sx, sy - 4);
         // Unlock hint
-        const unlockLvl = (i - 2) * 3 + 1;
+        const unlockLvl = (i - 2) * 2 + 1;
         ctx.font = '7px Orbitron, monospace';
         ctx.fillStyle = '#445';
         ctx.fillText('LVL ' + unlockLvl, sx, sy + 14);
