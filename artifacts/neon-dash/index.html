@@ -133,7 +133,10 @@
   let frameCount = 0, lastTime = 0;
   let continueUsed = false;
   let comboShowUntil = 0, successFlashUntil = 0;
-  let btnPlay = null, btnContinue = null, btnMute = null, btnGuide = null, btnGuideBack = null;
+  let btnPlay = null, btnContinue = null, btnMute = null, btnGuide = null, btnGuideBack = null, btnSkipAd = null;
+  const AD_DURATION   = 300; // frames (~5 s at 60 fps)
+  const AD_SKIP_AFTER = 180; // frames (~3 s)
+  let adTimer = 0;
 
   try { best = parseInt(localStorage.getItem('nds_best')) || 0; } catch(_) {}
 
@@ -1003,6 +1006,104 @@
     btnGuideBack = { x: bbx, y: bby, w: bbw, h: bbh };
   }
 
+  /* ══════════════ AD SCREEN ══════════════ */
+  function drawAd() {
+    // Blurred game behind ad
+    drawBg();
+    walls.forEach(drawWall);
+    drawParticles();
+    ctx.fillStyle = 'rgba(4,2,14,0.82)';
+    ctx.fillRect(0, 0, W, H);
+
+    const cx = W / 2, cy = H / 2;
+    const progress = adTimer / AD_DURATION;
+    const secsLeft = Math.ceil((AD_DURATION - adTimer) / 60);
+    btnSkipAd = null;
+
+    // ── Ad card ──
+    const cw = Math.min(W * 0.78, 480), ch = Math.min(H * 0.52, 320);
+    const cx0 = cx - cw / 2, cy0 = cy - ch / 2 - 18;
+
+    ctx.fillStyle = '#0c0820';
+    ctx.beginPath(); ctx.roundRect(cx0, cy0, cw, ch, 14); ctx.fill();
+    ctx.strokeStyle = '#2a1060'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.roundRect(cx0 + 0.5, cy0 + 0.5, cw - 1, ch - 1, 14); ctx.stroke();
+
+    // Ad label badge
+    ctx.fillStyle = '#1a0840';
+    ctx.beginPath(); ctx.roundRect(cx0 + 10, cy0 + 10, 60, 18, 4); ctx.fill();
+    ctx.font = 'bold 9px Orbitron, monospace'; ctx.fillStyle = '#886699';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText('AD', cx0 + 18, cy0 + 19);
+
+    // Animated neon logo placeholder (pulsing rings)
+    const lcy = cy0 + ch * 0.42;
+    const pulse = 1 + 0.05 * Math.sin(frameCount * 0.08);
+    for (let r = 0; r < 3; r++) {
+      const rad = (28 + r * 18) * pulse;
+      const alpha = 0.18 - r * 0.04;
+      ctx.beginPath(); ctx.arc(cx, lcy, rad, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(120,0,255,${alpha})`; ctx.lineWidth = 2; ctx.stroke();
+    }
+    const iconRot = frameCount * 0.025;
+    fillShape('star', cx, lcy, 26, '#bb44ff', '#9900ff', 14, iconRot);
+
+    // Sponsor name
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = 'bold 17px Orbitron, monospace';
+    glow('#cc66ff', 14); ctx.fillStyle = '#cc66ff';
+    ctx.fillText('NEON ADS NETWORK', cx, lcy + 44); noGlow();
+
+    ctx.font = '10px Orbitron, monospace'; ctx.fillStyle = '#554466';
+    ctx.fillText('Your ad could appear here', cx, lcy + 64);
+
+    // Tagline
+    ctx.font = 'italic 11px serif'; ctx.fillStyle = '#443355';
+    ctx.fillText('"Power up your game with Neon Ads"', cx, cy0 + ch - 22);
+
+    // ── Progress bar (bottom of card) ──
+    const bary = cy0 + ch - 7, barw = cw - 20, barx = cx0 + 10;
+    ctx.fillStyle = '#110030';
+    ctx.beginPath(); ctx.roundRect(barx, bary, barw, 5, 3); ctx.fill();
+    const fg = ctx.createLinearGradient(barx, 0, barx + barw, 0);
+    fg.addColorStop(0, '#6600cc'); fg.addColorStop(1, '#ff00ff');
+    ctx.fillStyle = fg;
+    ctx.beginPath(); ctx.roundRect(barx, bary, barw * progress, 5, 3); ctx.fill();
+
+    // ── Countdown circle (top-right corner) ──
+    const ccx = cx0 + cw - 26, ccy = cy0 + 22, cr = 16;
+    ctx.beginPath(); ctx.arc(ccx, ccy, cr, -Math.PI/2, -Math.PI/2 + Math.PI*2*progress);
+    ctx.strokeStyle = '#ff00ff'; ctx.lineWidth = 2.5; ctx.stroke();
+    ctx.font = 'bold 12px Orbitron, monospace'; ctx.fillStyle = '#cc66ff';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(secsLeft, ccx, ccy);
+
+    // ── SKIP button (appears after AD_SKIP_AFTER frames) ──
+    const canSkip = adTimer >= AD_SKIP_AFTER;
+    const skipW = 140, skipH = 36, skipX = cx - skipW / 2, skipY = cy0 + ch + 18;
+    if (canSkip) {
+      drawBtn(skipX, skipY, skipW, skipH, '#00f5ff', '#001830', 'SKIP AD  ▶▶');
+      btnSkipAd = { x: skipX, y: skipY, w: skipW, h: skipH };
+    } else {
+      const waitSecs = Math.ceil((AD_SKIP_AFTER - adTimer) / 60);
+      ctx.font = '11px Orbitron, monospace'; ctx.fillStyle = '#332244';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(`Skip in ${waitSecs}…`, cx, skipY + skipH / 2);
+    }
+
+    // ── "Watching ad earns continue" reminder ──
+    ctx.font = '10px Orbitron, monospace'; ctx.fillStyle = '#2a1a44';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('Watch the full ad to continue your run', cx, skipY + skipH + 18);
+  }
+
+  function doAdReward() {
+    continueUsed = true; particles = []; playerFlash = 0;
+    walls = walls.filter(w => !w.passed);
+    Snd.stopMusic(); Snd.startMusic();
+    state = 'playing';
+  }
+
   /* ══════════════ GAME SCREEN ══════════════ */
   function drawGame() {
     drawBg();
@@ -1089,6 +1190,11 @@
       return;
     }
 
+    if (state === 'ad') {
+      if (btnSkipAd && inRect(e.clientX, e.clientY, btnSkipAd)) doAdReward();
+      return;
+    }
+
     if (state === 'guide') {
       if (btnGuideBack && inRect(e.clientX, e.clientY, btnGuideBack)) state = 'start';
       return;
@@ -1106,10 +1212,7 @@
       if (btnPlay && inRect(e.clientX, e.clientY, btnPlay)) {
         state = 'playing'; document.body.classList.add('playing'); initGame();
       } else if (btnContinue && !continueUsed && inRect(e.clientX, e.clientY, btnContinue)) {
-        continueUsed = true; particles = []; playerFlash = 0;
-        walls = walls.filter(w => !w.passed);
-        Snd.stopMusic(); Snd.startMusic();
-        state = 'playing';
+        adTimer = 0; state = 'ad';
       }
       return;
     }
@@ -1177,6 +1280,11 @@
     playerY = baseY + Math.sin(frameCount * BOB_FREQ) * (H * BOB_AMP * 0.18);
     playerRot += ROT_SPD[SHAPES[shapeIdx]];
 
+    if (state === 'ad') {
+      adTimer++;
+      if (adTimer >= AD_DURATION) doAdReward();
+      updateParticles(); return;
+    }
     if (state !== 'playing') { updateParticles(); return; }
 
     nextWallTimer++;
@@ -1201,6 +1309,7 @@
     update();
     if      (state === 'start')   drawStart();
     else if (state === 'guide')   drawGuide();
+    else if (state === 'ad')      drawAd();
     else if (state === 'playing') drawGame();
     else                          drawDead();
     requestAnimationFrame(loop);
